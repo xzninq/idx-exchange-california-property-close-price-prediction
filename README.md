@@ -2,23 +2,23 @@
 
 ## Project Overview
 
-This project develops machine learning workflows for real estate valuation using MLS/IDX-style housing data. The work focuses on data cleaning, feature engineering, regression modeling, model evaluation, and business insight generation for home price prediction.
+This project builds machine learning models to predict California residential property sale prices using CRMLS housing data, covering data preprocessing, feature engineering, model training, evaluation, and price prediction.
 
 ## Main Tasks
 
-- Cleaned and preprocessed real estate listing data
-- Engineered predictive features from property characteristics
-- Built machine learning and regression models for real estate valuation
-- Evaluated model performance using metrics such as R² and MdAPE
-- Documented workflow steps and assumptions for reproducibility
+- Cleaned and prepared real estate listing data for analysis
+- Explored property characteristics and created features to improve prediction accuracy
+- Trained and compared several machine learning regression models to estimate home sale prices
+- Evaluated model performance using metrics such as R² and MdAPE to identify the best-performing model
+- Documented the workflow, modeling decisions, and assumptions to ensure the project is easy to understand and reproduce
 
 ## Repository Structure
 
 - `README.md`: Project overview and reproduction instructions
-- `src/`: Python code files
-- `notebooks/`: Jupyter notebooks for modeling and analysis
+- `src/`: Python source code
+- `notebooks/`: Jupyter notebooks for data modeling and analysis
 - `data/`: Sample or non-confidential data
-- `results/`: Model outputs and summaries
+- `results/`: Model outputs and visualizations
 
 ## How to Reproduce
 
