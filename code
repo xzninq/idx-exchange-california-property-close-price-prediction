@@ -1,0 +1,37 @@
+from google.colab import files
+
+uploaded = files.upload()
+
+import pandas as pd
+import glob
+
+files = glob.glob("/content/*.csv")
+
+df = pd.concat([pd.read_csv(file) for file in files], ignore_index=True)
+
+df.head()
+
+df.shape
+
+df.info()
+
+df.describe()
+
+df.columns
+
+df = df[
+    (df["PropertyType"] == "Residential") &
+    (df["PropertySubType"] == "SingleFamilyResidence")
+]
+
+import matplotlib.pyplot as plt
+
+plt.hist(df["Close Price"], bins=50)
+plt.title("Distribution of Close Price")
+plt.xlabel("Close Price")
+plt.ylabel("Count")
+plt.show()
+
+plt.boxplot(df["Close Price"].dropna())
+plt.title("Close Price")
+plt.show()
