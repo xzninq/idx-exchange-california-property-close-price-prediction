@@ -1,37 +1,246 @@
+# ============================================================
+# SETUP
+# ============================================================
 from google.colab import files
-
 uploaded = files.upload()
 
 import pandas as pd
+import numpy as np
 import glob
-
-files = glob.glob("/content/*.csv")
-
-df = pd.concat([pd.read_csv(file) for file in files], ignore_index=True)
-
-df.head()
-
-df.shape
-
-df.info()
-
-df.describe()
-
-df.columns
-
-df = df[
-    (df["PropertyType"] == "Residential") &
-    (df["PropertySubType"] == "SingleFamilyResidence")
-]
-
+import re
 import matplotlib.pyplot as plt
 
-plt.hist(df["Close Price"], bins=50)
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score, mean_absolute_error
+
+# ============================================================
+# LOAD
+# ============================================================
+files_list = glob.glob("/content/*.csv")
+df = pd.concat([pd.read_csv(f) for f in files_list], ignore_index=True)
+
+print(f"Shape: {df.shape}")
+print("Columns found in your real data:")
+print(df.columns.tolist())
+
+# ============================================================
+# AUTO-DETECT COLUMN NAMES
+# (handles spacing/naming differences like "Close Price" vs "ClosePrice"
+#  without you having to hand-fix every reference)
+# ============================================================
+def normalize(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+def find_column(df, candidates):
+    """Return the first actual column name in df matching any candidate,
+    ignoring spaces/case/punctuation. Raises a clear error if none found."""
+    norm_map = {normalize(c): c for c in df.columns}
+    for cand in candidates:
+        key = normalize(cand)
+        if key in norm_map:
+            return norm_map[key]
+    raise KeyError(
+        f"None of {candidates} found in columns: {df.columns.tolist()}"
+    )
+
+COL = {}
+COL["target"]      = find_column(df, ["ClosePrice", "Close Price", "SoldPrice", "Sold Price"])
+COL["property_type"] = find_column(df, ["PropertyType", "Property Type"])
+COL["sub_type"]    = find_column(df, ["PropertySubType", "Property Sub Type", "PropertySubtype"])
+COL["living_area"] = find_column(df, ["LivingArea", "Living Area", "LivingAreaSqFt", "Living Area SqFt"])
+COL["bedrooms"]    = find_column(df, ["BedroomsTotal", "Bedrooms Total", "Bedrooms"])
+COL["bathrooms"]   = find_column(df, ["BathroomsTotalInteger", "Bathrooms Total Integer", "BathroomsTotal", "Bathrooms"])
+COL["lot_size"]    = find_column(df, ["LotSizeSquareFeet", "Lot Size Square Feet", "LotSizeSqFt", "Lot Size"])
+COL["year_built"]  = find_column(df, ["YearBuilt", "Year Built"])
+COL["close_date"]  = find_column(df, ["CloseDate", "Close Date"])
+COL["city"]        = find_column(df, ["City"])
+
+print("\nResolved column mapping:")
+for k, v in COL.items():
+    print(f"  {k:15s} -> '{v}'")
+
+# ============================================================
+# WEEK 2 -- SCOPE + EXPLORE
+# ============================================================
+print(df.shape)
+df.info()
+df.describe()
+
+df = df[
+    (df[COL["property_type"]] == "Residential") &
+    (df[COL["sub_type"]] == "SingleFamilyResidence")
+].copy()
+print(f"Scoped shape: {df.shape}")
+
+plt.hist(df[COL["target"]], bins=50)
 plt.title("Distribution of Close Price")
 plt.xlabel("Close Price")
 plt.ylabel("Count")
 plt.show()
 
-plt.boxplot(df["Close Price"].dropna())
+plt.boxplot(df[COL["target"]].dropna())
 plt.title("Close Price")
+plt.show()
+
+fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+df[COL["living_area"]].dropna().hist(bins=50, ax=axes[0, 0])
+axes[0, 0].set_title("Living Area")
+
+df[COL["bedrooms"]].dropna().hist(bins=range(0, 10), ax=axes[0, 1])
+axes[0, 1].set_title("Bedrooms")
+
+df[COL["bathrooms"]].dropna().hist(bins=range(0, 8), ax=axes[1, 0])
+axes[1, 0].set_title("Bathrooms")
+
+df[COL["lot_size"]].dropna().hist(bins=50, ax=axes[1, 1])
+axes[1, 1].set_title("Lot Size")
+plt.tight_layout()
+plt.show()
+
+print(df[[COL["target"], COL["living_area"], COL["bedrooms"],
+          COL["bathrooms"], COL["lot_size"]]].isna().sum())
+
+df[COL["close_date"]] = pd.to_datetime(df[COL["close_date"]])
+df["month"] = df[COL["close_date"]].dt.to_period("M")
+
+monthly_median = df.groupby("month")[COL["target"]].median()
+monthly_median.plot(marker="o", title="Median Close Price by month")
+plt.show()
+
+print(df["month"].value_counts().sort_index())
+
+# ============================================================
+# WEEK 3 -- PREPROCESSING
+# ============================================================
+numeric_features = [COL["living_area"], COL["bedrooms"], COL["bathrooms"],
+                     COL["lot_size"], COL["year_built"]]
+categorical_features = [COL["city"]]
+target = COL["target"]
+
+df = df.dropna(subset=[target])
+
+preprocessor = ColumnTransformer([
+    ("num", Pipeline([
+        ("impute", SimpleImputer(strategy="median")),
+        ("scale", StandardScaler()),
+    ]), numeric_features),
+    ("cat", Pipeline([
+        ("impute", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore")),
+    ]), categorical_features),
+])
+
+months_sorted = sorted(df["month"].unique())
+test_month = months_sorted[-1]
+
+window_results = {}
+for x in range(1, len(months_sorted)):
+    train_months = months_sorted[-1 - x:-1]
+    if len(train_months) < x:
+        continue
+
+    train_df = df[df["month"].isin(train_months)]
+    test_df = df[df["month"] == test_month]
+    if train_df.empty or test_df.empty:
+        continue
+
+    X_train = preprocessor.fit_transform(train_df[numeric_features + categorical_features])
+    X_test = preprocessor.transform(test_df[numeric_features + categorical_features])
+    y_train, y_test = train_df[target], test_df[target]
+
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+
+    window_results[x] = r2_score(y_test, preds)
+    print(f"X={x} training month(s) -> test R² = {window_results[x]:.4f}")
+
+best_x = max(window_results, key=window_results.get)
+print(f"\nBest training window: X={best_x} months (R²={window_results[best_x]:.4f})")
+
+# ============================================================
+# WEEK 4 -- BASELINE MODEL
+# ============================================================
+train_months = months_sorted[-1 - best_x:-1]
+train_df = df[df["month"].isin(train_months)]
+test_df = df[df["month"] == test_month]
+
+X_train = preprocessor.fit_transform(train_df[numeric_features + categorical_features])
+X_test = preprocessor.transform(test_df[numeric_features + categorical_features])
+y_train, y_test = train_df[target], test_df[target]
+
+baseline_model = LinearRegression()
+baseline_model.fit(X_train, y_train)
+preds = baseline_model.predict(X_test)
+
+r2 = r2_score(y_test, preds)
+mae = mean_absolute_error(y_test, preds)
+rmse = np.sqrt(np.mean((y_test - preds) ** 2))
+
+print(f"Training months: {[str(m) for m in train_months]}")
+print(f"Test month: {test_month}")
+print(f"R²   : {r2:.4f}")
+print(f"MAE  : ${mae:,.0f}")
+print(f"RMSE : ${rmse:,.0f}")
+
+# ============================================================
+# WEEK 5 -- DECISION TREE & RANDOM FOREST
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. Decision Tree
+# ------------------------------------------------------------
+dt_model = DecisionTreeRegressor(max_depth=8, random_state=42)
+dt_model.fit(X_train, y_train)
+dt_preds = dt_model.predict(X_test)
+
+dt_r2 = r2_score(y_test, dt_preds)
+dt_mae = mean_absolute_error(y_test, dt_preds)
+dt_rmse = np.sqrt(np.mean((y_test - dt_preds) ** 2))
+
+print("\nDecision Tree")
+print(f"  R²   : {dt_r2:.4f}")
+print(f"  MAE  : ${dt_mae:,.0f}")
+print(f"  RMSE : ${dt_rmse:,.0f}")
+
+# ------------------------------------------------------------
+# 2. Random Forest
+# ------------------------------------------------------------
+rf_model = RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)
+rf_model.fit(X_train, y_train)
+rf_preds = rf_model.predict(X_test)
+
+rf_r2 = r2_score(y_test, rf_preds)
+rf_mae = mean_absolute_error(y_test, rf_preds)
+rf_rmse = np.sqrt(np.mean((y_test - rf_preds) ** 2))
+
+print("\nRandom Forest")
+print(f"  R²   : {rf_r2:.4f}")
+print(f"  MAE  : ${rf_mae:,.0f}")
+print(f"  RMSE : ${rf_rmse:,.0f}")
+
+# ------------------------------------------------------------
+# 3. Compare all three models against the baseline
+# ------------------------------------------------------------
+comparison = pd.DataFrame({
+    "Model": ["Linear Regression (baseline)", "Decision Tree", "Random Forest"],
+    "R2":    [r2, dt_r2, rf_r2],
+    "MAE":   [mae, dt_mae, rf_mae],
+    "RMSE":  [rmse, dt_rmse, rf_rmse],
+})
+print("\nModel comparison:")
+print(comparison)
+
+plt.figure(figsize=(6, 4))
+plt.bar(comparison["Model"], comparison["R2"], color=["gray", "orange", "green"])
+plt.title("Test R² by Model")
+plt.ylabel("R²")
+plt.xticks(rotation=15, ha="right")
+plt.tight_layout()
 plt.show()
