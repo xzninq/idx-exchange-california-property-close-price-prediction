@@ -36,13 +36,8 @@
 ## Models tested
 Linear Regression (baseline), Decision Tree, Random Forest, Gradient Boosting
 
-## Results (new feature set, test month = {test_month})
-{metrics_summary.to_markdown(index=False)}
-
-**Best model: {best_model_name}**
-
-### Error by price band
-{band_summary.to_markdown(index=False)}
+## Results
+**Best model: linear_regression
 
 ## How to re-run
 1. Upload at least 6 months of `CRMLSSold*.csv` files into Colab or in the same folder as
