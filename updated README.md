@@ -35,8 +35,6 @@
 
 ## Models tested
 Linear Regression (baseline), Decision Tree, Random Forest, Gradient Boosting
-(scikit-learn `GradientBoostingRegressor`; swap in XGBoost/LightGBM the same
-way if those packages are available in your environment).
 
 ## Results (new feature set, test month = {test_month})
 {metrics_summary.to_markdown(index=False)}
