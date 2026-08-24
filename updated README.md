@@ -47,9 +47,8 @@ way if those packages are available in your environment).
 {band_summary.to_markdown(index=False)}
 
 ## How to re-run
-1. Place at least 6 months of `CRMLSSold*.csv` files in the same folder as
-   `pipeline.py` (or upload them in Colab -- the script detects Colab
-   automatically and prompts for upload if no files are found).
+1. Upload at least 6 months of `CRMLSSold*.csv` files into Colab or in the same folder as
+   `pipeline.py`
 2. `pip install pandas numpy scikit-learn matplotlib geopandas shapely`
    (geopandas/shapely are optional -- the script falls back to the MLS
    export's own school-district field if they, or internet access, aren't
