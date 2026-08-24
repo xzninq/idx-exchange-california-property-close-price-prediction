@@ -1,13 +1,9 @@
-# ============================================================
-# SETUP
-# ============================================================
-from google.colab import files
-uploaded = files.upload()
-
 import pandas as pd
 import numpy as np
 import glob
 import re
+import os
+import json
 import matplotlib.pyplot as plt
 
 from sklearn.impute import SimpleImputer
@@ -16,77 +12,107 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_error
 
-# ============================================================
-# LOAD
-# ============================================================
-files_list = glob.glob("/content/*.csv")
-df = pd.concat([pd.read_csv(f) for f in files_list], ignore_index=True)
+OUTPUT_DIR = "outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-print(f"Shape: {df.shape}")
+
+def savefig(name):
+    """Save the current figure to outputs/ and also show it (no-op outside notebooks)."""
+    plt.savefig(os.path.join(OUTPUT_DIR, name), dpi=120, bbox_inches="tight")
+    plt.show()
+    plt.close()
+
+
+# ============================================================
+# WEEK 1 -- ORIENTATION & SETUP
+# ============================================================
+try:   
+    from google.colab import files as colab_files  # noqa: F401
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
+
+if IN_COLAB and not glob.glob("/content/CRMLSSold*.csv"):
+    uploaded = colab_files.upload()
+
+DATA_DIR = "/content" if IN_COLAB else "."
+
+# ============================================================
+# WEEK 2 -- DATA EXPLORATION
+# ============================================================
+files_list = sorted(glob.glob(os.path.join(DATA_DIR, "CRMLSSold*.csv")))
+if not files_list:
+    raise FileNotFoundError(
+        f"No files matching 'CRMLSSold*.csv' found in '{DATA_DIR}'. "
+        "Upload/download at least 6 months of data first."
+    )
+print(f"Found {len(files_list)} monthly file(s):")
+for f in files_list:
+    print(f"  {f}")
+
+df = pd.concat([pd.read_csv(f, low_memory=False) for f in files_list], ignore_index=True)
+print(f"\nCombined shape: {df.shape}")
 print("Columns found in your real data:")
 print(df.columns.tolist())
 
-# ============================================================
-# AUTO-DETECT COLUMN NAMES
-# (handles spacing/naming differences like "Close Price" vs "ClosePrice"
-#  without you having to hand-fix every reference)
-# ============================================================
+# ------------------------------------------------------------
+# Auto-detect column names (handles "Close Price" vs "ClosePrice" etc.)
+# ------------------------------------------------------------
 def normalize(s):
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
-def find_column(df, candidates):
-    """Return the first actual column name in df matching any candidate,
+
+def find_column(frame, candidates):
+    """Return the first actual column name in frame matching any candidate,
     ignoring spaces/case/punctuation. Raises a clear error if none found."""
-    norm_map = {normalize(c): c for c in df.columns}
+    norm_map = {normalize(c): c for c in frame.columns}
     for cand in candidates:
         key = normalize(cand)
         if key in norm_map:
             return norm_map[key]
-    raise KeyError(
-        f"None of {candidates} found in columns: {df.columns.tolist()}"
-    )
+    raise KeyError(f"None of {candidates} found in columns: {frame.columns.tolist()}")
 
 COL = {}
-COL["target"]      = find_column(df, ["ClosePrice", "Close Price", "SoldPrice", "Sold Price"])
+COL["target"] = find_column(df, ["ClosePrice", "Close Price", "SoldPrice", "Sold Price"])
 COL["property_type"] = find_column(df, ["PropertyType", "Property Type"])
-COL["sub_type"]    = find_column(df, ["PropertySubType", "Property Sub Type", "PropertySubtype"])
+COL["sub_type"] = find_column(df, ["PropertySubType", "Property Sub Type", "PropertySubtype"])
 COL["living_area"] = find_column(df, ["LivingArea", "Living Area", "LivingAreaSqFt", "Living Area SqFt"])
-COL["bedrooms"]    = find_column(df, ["BedroomsTotal", "Bedrooms Total", "Bedrooms"])
-COL["bathrooms"]   = find_column(df, ["BathroomsTotalInteger", "Bathrooms Total Integer", "BathroomsTotal", "Bathrooms"])
-COL["lot_size"]    = find_column(df, ["LotSizeSquareFeet", "Lot Size Square Feet", "LotSizeSqFt", "Lot Size"])
-COL["year_built"]  = find_column(df, ["YearBuilt", "Year Built"])
-COL["close_date"]  = find_column(df, ["CloseDate", "Close Date"])
-COL["city"]        = find_column(df, ["City"])
+COL["bedrooms"] = find_column(df, ["BedroomsTotal", "Bedrooms Total", "Bedrooms"])
+COL["bathrooms"] = find_column(df, ["BathroomsTotalInteger", "Bathrooms Total Integer", "BathroomsTotal", "Bathrooms"])
+COL["lot_size"] = find_column(df, ["LotSizeSquareFeet", "Lot Size Square Feet", "LotSizeSqFt", "Lot Size"])
+COL["year_built"] = find_column(df, ["YearBuilt", "Year Built"])
+COL["close_date"] = find_column(df, ["CloseDate", "Close Date"])
+COL["city"] = find_column(df, ["City"])
 
 print("\nResolved column mapping:")
 for k, v in COL.items():
     print(f"  {k:15s} -> '{v}'")
 
-# ============================================================
-# WEEK 2 -- SCOPE + EXPLORE
-# ============================================================
 print(df.shape)
 df.info()
-df.describe()
+print(df.describe())
 
+# Restrict to Residential / SingleFamilyResidence per task spec
 df = df[
     (df[COL["property_type"]] == "Residential") &
     (df[COL["sub_type"]] == "SingleFamilyResidence")
 ].copy()
 print(f"Scoped shape: {df.shape}")
 
+plt.figure()
 plt.hist(df[COL["target"]], bins=50)
 plt.title("Distribution of Close Price")
 plt.xlabel("Close Price")
 plt.ylabel("Count")
-plt.show()
+savefig("01_close_price_hist.png")
 
+plt.figure()
 plt.boxplot(df[COL["target"]].dropna())
 plt.title("Close Price")
-plt.show()
+savefig("02_close_price_box.png")
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 df[COL["living_area"]].dropna().hist(bins=50, ax=axes[0, 0])
@@ -101,7 +127,7 @@ axes[1, 0].set_title("Bathrooms")
 df[COL["lot_size"]].dropna().hist(bins=50, ax=axes[1, 1])
 axes[1, 1].set_title("Lot Size")
 plt.tight_layout()
-plt.show()
+savefig("03_feature_hists.png")
 
 print(df[[COL["target"], COL["living_area"], COL["bedrooms"],
           COL["bathrooms"], COL["lot_size"]]].isna().sum())
@@ -110,46 +136,66 @@ df[COL["close_date"]] = pd.to_datetime(df[COL["close_date"]])
 df["month"] = df[COL["close_date"]].dt.to_period("M")
 
 monthly_median = df.groupby("month")[COL["target"]].median()
+plt.figure()
 monthly_median.plot(marker="o", title="Median Close Price by month")
-plt.show()
+savefig("04_monthly_median_price.png")
 
 print(df["month"].value_counts().sort_index())
 
 # ============================================================
-# WEEK 3 -- PREPROCESSING
+# WEEK 3 -- DATA PREPROCESSING
 # ============================================================
 numeric_features = [COL["living_area"], COL["bedrooms"], COL["bathrooms"],
                      COL["lot_size"], COL["year_built"]]
 categorical_features = [COL["city"]]
 target = COL["target"]
 
+# Drop rows with no target -- can't train/evaluate on those
 df = df.dropna(subset=[target])
 
-preprocessor = ColumnTransformer([
-    ("num", Pipeline([
-        ("impute", SimpleImputer(strategy="median")),
-        ("scale", StandardScaler()),
-    ]), numeric_features),
-    ("cat", Pipeline([
-        ("impute", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
-    ]), categorical_features),
-])
+# --- Outlier handling -----------------------------------------------------
+price_lo, price_hi = df[target].quantile([0.01, 0.99])
+n_before_outlier_trim = len(df)
+df = df[(df[target] >= price_lo) & (df[target] <= price_hi)].copy()
+print(f"Outlier trim: kept {len(df):,} / {n_before_outlier_trim:,} rows "
+      f"(ClosePrice between ${price_lo:,.0f} and ${price_hi:,.0f})")
 
+
+def make_preprocessor(numeric_feats, categorical_feats):
+    """Build a fresh ColumnTransformer -- kept as a function so Week 6's
+    expanded feature set doesn't get fit/transformed through a preprocessor
+    that was already fit on the old feature set."""
+    return ColumnTransformer([
+        ("num", Pipeline([
+            ("impute", SimpleImputer(strategy="median")),
+            ("scale", StandardScaler()),
+        ]), numeric_feats),
+        ("cat", Pipeline([
+            ("impute", SimpleImputer(strategy="most_frequent")),
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+        ]), categorical_feats),
+    ])
+
+# Train/test split: most recent month = test set, X months immediately
+# before it = training set. X is tuned by trying every possible window
+# length and keeping whichever gives the best test R².
 months_sorted = sorted(df["month"].unique())
 test_month = months_sorted[-1]
+max_x = len(months_sorted) - 1  # months available before the test month
+
+if max_x < 1:
+    raise ValueError("Need at least 2 months of data (1 train + 1 test).")
 
 window_results = {}
-for x in range(1, len(months_sorted)):
-    train_months = months_sorted[-1 - x:-1]
-    if len(train_months) < x:
-        continue
+for x in range(1, max_x + 1):
+    train_months = months_sorted[-1 - x:-1]  # x months right before test_month
 
     train_df = df[df["month"].isin(train_months)]
     test_df = df[df["month"] == test_month]
     if train_df.empty or test_df.empty:
         continue
 
+    preprocessor = make_preprocessor(numeric_features, categorical_features)
     X_train = preprocessor.fit_transform(train_df[numeric_features + categorical_features])
     X_test = preprocessor.transform(test_df[numeric_features + categorical_features])
     y_train, y_test = train_df[target], test_df[target]
@@ -159,10 +205,12 @@ for x in range(1, len(months_sorted)):
     preds = model.predict(X_test)
 
     window_results[x] = r2_score(y_test, preds)
-    print(f"X={x} training month(s) -> test R² = {window_results[x]:.4f}")
+    print(f"X={x} training month(s) -> test R\u00b2 = {window_results[x]:.4f}")
 
 best_x = max(window_results, key=window_results.get)
-print(f"\nBest training window: X={best_x} months (R²={window_results[best_x]:.4f})")
+print(f"\nBest training window: X={best_x} months (R\u00b2={window_results[best_x]:.4f})")
+
+pd.Series(window_results).sort_index().to_csv(os.path.join(OUTPUT_DIR, "window_tuning_results.csv"))
 
 # ============================================================
 # WEEK 4 -- BASELINE MODEL
@@ -171,8 +219,9 @@ train_months = months_sorted[-1 - best_x:-1]
 train_df = df[df["month"].isin(train_months)]
 test_df = df[df["month"] == test_month]
 
-X_train = preprocessor.fit_transform(train_df[numeric_features + categorical_features])
-X_test = preprocessor.transform(test_df[numeric_features + categorical_features])
+preprocessor_old = make_preprocessor(numeric_features, categorical_features)
+X_train = preprocessor_old.fit_transform(train_df[numeric_features + categorical_features])
+X_test = preprocessor_old.transform(test_df[numeric_features + categorical_features])
 y_train, y_test = train_df[target], test_df[target]
 
 baseline_model = LinearRegression()
@@ -185,17 +234,13 @@ rmse = np.sqrt(np.mean((y_test - preds) ** 2))
 
 print(f"Training months: {[str(m) for m in train_months]}")
 print(f"Test month: {test_month}")
-print(f"R²   : {r2:.4f}")
+print(f"R\u00b2   : {r2:.4f}")
 print(f"MAE  : ${mae:,.0f}")
 print(f"RMSE : ${rmse:,.0f}")
 
 # ============================================================
 # WEEK 5 -- DECISION TREE & RANDOM FOREST
 # ============================================================
-
-# ------------------------------------------------------------
-# 1. Decision Tree
-# ------------------------------------------------------------
 dt_model = DecisionTreeRegressor(max_depth=8, random_state=42)
 dt_model.fit(X_train, y_train)
 dt_preds = dt_model.predict(X_test)
@@ -205,13 +250,10 @@ dt_mae = mean_absolute_error(y_test, dt_preds)
 dt_rmse = np.sqrt(np.mean((y_test - dt_preds) ** 2))
 
 print("\nDecision Tree")
-print(f"  R²   : {dt_r2:.4f}")
+print(f"  R\u00b2   : {dt_r2:.4f}")
 print(f"  MAE  : ${dt_mae:,.0f}")
 print(f"  RMSE : ${dt_rmse:,.0f}")
 
-# ------------------------------------------------------------
-# 2. Random Forest
-# ------------------------------------------------------------
 rf_model = RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)
 rf_model.fit(X_train, y_train)
 rf_preds = rf_model.predict(X_test)
@@ -221,26 +263,271 @@ rf_mae = mean_absolute_error(y_test, rf_preds)
 rf_rmse = np.sqrt(np.mean((y_test - rf_preds) ** 2))
 
 print("\nRandom Forest")
-print(f"  R²   : {rf_r2:.4f}")
+print(f"  R\u00b2   : {rf_r2:.4f}")
 print(f"  MAE  : ${rf_mae:,.0f}")
 print(f"  RMSE : ${rf_rmse:,.0f}")
 
-# ------------------------------------------------------------
-# 3. Compare all three models against the baseline
-# ------------------------------------------------------------
 comparison = pd.DataFrame({
     "Model": ["Linear Regression (baseline)", "Decision Tree", "Random Forest"],
-    "R2":    [r2, dt_r2, rf_r2],
-    "MAE":   [mae, dt_mae, rf_mae],
-    "RMSE":  [rmse, dt_rmse, rf_rmse],
+    "R2": [r2, dt_r2, rf_r2],
+    "MAE": [mae, dt_mae, rf_mae],
+    "RMSE": [rmse, dt_rmse, rf_rmse],
 })
 print("\nModel comparison:")
 print(comparison)
 
 plt.figure(figsize=(6, 4))
 plt.bar(comparison["Model"], comparison["R2"], color=["gray", "orange", "green"])
-plt.title("Test R² by Model")
-plt.ylabel("R²")
+plt.title("Test R\u00b2 by Model")
+plt.ylabel("R\u00b2")
 plt.xticks(rotation=15, ha="right")
 plt.tight_layout()
-plt.show()
+savefig("05_model_comparison_r2.png")
+
+# ============================================================
+# WEEK 6 -- FEATURE ENGINEERING + SCHOOL DISTRICT LAYER
+# ============================================================
+COL["latitude"] = find_column(df, ["Latitude", "Lat"])
+COL["longitude"] = find_column(df, ["Longitude", "Long", "Lng"])
+
+# --- Engineered features -------------------------------------------------
+df["BedBathRatio"] = df[COL["bedrooms"]] / df[COL["bathrooms"]].replace(0, np.nan)
+
+df["PropertyAge"] = df[COL["close_date"]].dt.year - df[COL["year_built"]]
+df.loc[df["PropertyAge"] < 0, "PropertyAge"] = np.nan
+
+print(df[["BedBathRatio", "PropertyAge"]].describe())
+
+# --- School district layer ------------------------------------------------
+school_join_method = None
+try:
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    districts_url = ("https://gis.data.ca.gov/api/download/v1/items/"
+                      "b0e3b936426a47ce9d9a2e77e2bb86cc/geojson?layers=0")
+    districts = gpd.read_file(districts_url)
+    print(f"Loaded {len(districts)} school district polygons")
+
+    def find_gdf_column(gdf, candidates):
+        norm_map = {normalize(c): c for c in gdf.columns}
+        for cand in candidates:
+            key = normalize(cand)
+            if key in norm_map:
+                return norm_map[key]
+        raise KeyError(f"None of {candidates} found in columns: {gdf.columns.tolist()}")
+
+    district_name_col = find_gdf_column(districts, ["DistrictName", "District Name", "District", "NAME", "Name"])
+
+    districts = districts.set_crs(epsg=4326) if districts.crs is None else districts.to_crs(epsg=4326)
+
+    df_before_join = len(df)
+    geometry = [Point(xy) for xy in zip(df[COL["longitude"]], df[COL["latitude"]])]
+    properties_gdf = gpd.GeoDataFrame(df.copy(), geometry=geometry, crs="EPSG:4326")
+
+    joined = gpd.sjoin(
+        properties_gdf,
+        districts[[district_name_col, "geometry"]],
+        how="left",
+        predicate="within",
+    )
+    joined = joined[~joined.index.duplicated(keep="first")]
+    df["SchoolDistrict"] = joined[district_name_col]
+
+    n_matched = df["SchoolDistrict"].notna().sum()
+    print(f"Matched {n_matched} / {df_before_join} properties to a school district "
+          f"({n_matched / df_before_join:.1%}) via spatial join")
+    school_join_method = "spatial_join"
+
+except Exception as e:
+    print(f"Spatial join unavailable in this environment ({type(e).__name__}: {e}).")
+    district_col = find_column(df, ["HighSchoolDistrict", "High School District"])
+    df["SchoolDistrict"] = df[district_col]
+    n_matched = df["SchoolDistrict"].notna().sum()
+    print(f"Falling back to the '{district_col}' field already in the MLS export: "
+          f"{n_matched} / {len(df)} properties have a district "
+          f"({n_matched / len(df):.1%}).")
+    school_join_method = f"fallback_column:{district_col}"
+
+# --- Re-slice train/test with the new columns and retrain --------------
+numeric_features_old = numeric_features.copy()
+categorical_features_old = categorical_features.copy()
+
+numeric_features_new = numeric_features_old + ["BedBathRatio", "PropertyAge"]
+categorical_features_new = categorical_features_old + ["SchoolDistrict"]
+
+train_df_new = df[df["month"].isin(train_months)]
+test_df_new = df[df["month"] == test_month]
+
+preprocessor_new = make_preprocessor(numeric_features_new, categorical_features_new)
+X_train_new = preprocessor_new.fit_transform(train_df_new[numeric_features_new + categorical_features_new])
+X_test_new = preprocessor_new.transform(test_df_new[numeric_features_new + categorical_features_new])
+y_train_new, y_test_new = train_df_new[target], test_df_new[target]
+
+lr_model_new = LinearRegression()
+lr_model_new.fit(X_train_new, y_train_new)
+lr_preds_new = lr_model_new.predict(X_test_new)
+r2_new = r2_score(y_test_new, lr_preds_new)
+mae_new = mean_absolute_error(y_test_new, lr_preds_new)
+rmse_new = np.sqrt(np.mean((y_test_new - lr_preds_new) ** 2))
+
+dt_model_new = DecisionTreeRegressor(max_depth=8, random_state=42)
+dt_model_new.fit(X_train_new, y_train_new)
+dt_preds_new = dt_model_new.predict(X_test_new)
+dt_r2_new = r2_score(y_test_new, dt_preds_new)
+dt_mae_new = mean_absolute_error(y_test_new, dt_preds_new)
+dt_rmse_new = np.sqrt(np.mean((y_test_new - dt_preds_new) ** 2))
+
+rf_model_new = RandomForestRegressor(n_estimators=200, max_depth=8, random_state=42, n_jobs=-1)
+rf_model_new.fit(X_train_new, y_train_new)
+rf_preds_new = rf_model_new.predict(X_test_new)
+rf_r2_new = r2_score(y_test_new, rf_preds_new)
+rf_mae_new = mean_absolute_error(y_test_new, rf_preds_new)
+rf_rmse_new = np.sqrt(np.mean((y_test_new - rf_preds_new) ** 2))
+
+comparison_old_vs_new = pd.DataFrame({
+    "Model": ["Linear Regression", "Linear Regression",
+              "Decision Tree", "Decision Tree",
+              "Random Forest", "Random Forest"],
+    "Feature Set": ["Old", "New (+bed/bath, age, district)"] * 3,
+    "R2": [r2, r2_new, dt_r2, dt_r2_new, rf_r2, rf_r2_new],
+    "MAE": [mae, mae_new, dt_mae, dt_mae_new, rf_mae, rf_mae_new],
+    "RMSE": [rmse, rmse_new, dt_rmse, dt_rmse_new, rf_rmse, rf_rmse_new],
+})
+print("\nOld vs New feature set comparison:")
+print(comparison_old_vs_new)
+comparison_old_vs_new.to_csv(os.path.join(OUTPUT_DIR, "old_vs_new_features.csv"), index=False)
+
+plt.figure(figsize=(8, 4))
+x = np.arange(3)
+width = 0.35
+old_r2s = [r2, dt_r2, rf_r2]
+new_r2s = [r2_new, dt_r2_new, rf_r2_new]
+plt.bar(x - width / 2, old_r2s, width, label="Old features")
+plt.bar(x + width / 2, new_r2s, width, label="New features")
+plt.xticks(x, ["Linear Regression", "Decision Tree", "Random Forest"], rotation=10, ha="right")
+plt.ylabel("R\u00b2")
+plt.title("Old vs New Feature Set: Test R\u00b2 by Model")
+plt.legend()
+plt.tight_layout()
+savefig("06_old_vs_new_features.png")
+
+# ============================================================
+# WEEK 7 -- ADVANCED MODELS (GRADIENT BOOSTING)
+# ============================================================
+gb_param_grid = [
+    {"n_estimators": 100, "max_depth": 3, "learning_rate": 0.1},
+    {"n_estimators": 200, "max_depth": 3, "learning_rate": 0.05},
+    {"n_estimators": 200, "max_depth": 4, "learning_rate": 0.05},
+    {"n_estimators": 300, "max_depth": 4, "learning_rate": 0.03},
+]
+
+gb_tuning_results = []
+best_gb_model, best_gb_r2, best_gb_params = None, -np.inf, None
+for params in gb_param_grid:
+    gb = GradientBoostingRegressor(random_state=42, **params)
+    gb.fit(X_train_new, y_train_new)
+    gb_preds = gb.predict(X_test_new)
+    gb_r2_i = r2_score(y_test_new, gb_preds)
+    gb_tuning_results.append({**params, "R2": gb_r2_i})
+    print(f"GradientBoosting {params} -> test R\u00b2 = {gb_r2_i:.4f}")
+    if gb_r2_i > best_gb_r2:
+        best_gb_model, best_gb_r2, best_gb_params = gb, gb_r2_i, params
+
+gb_preds = best_gb_model.predict(X_test_new)
+gb_r2 = r2_score(y_test_new, gb_preds)
+gb_mae = mean_absolute_error(y_test_new, gb_preds)
+gb_rmse = np.sqrt(np.mean((y_test_new - gb_preds) ** 2))
+
+print(f"\nBest Gradient Boosting params: {best_gb_params}")
+print(f"  R\u00b2   : {gb_r2:.4f}")
+print(f"  MAE  : ${gb_mae:,.0f}")
+print(f"  RMSE : ${gb_rmse:,.0f}")
+
+pd.DataFrame(gb_tuning_results).to_csv(os.path.join(OUTPUT_DIR, "gb_hyperparameter_tuning.csv"), index=False)
+
+all_models_comparison = pd.DataFrame({
+    "Model": ["Linear Regression", "Decision Tree", "Random Forest", "Gradient Boosting"],
+    "Feature Set": ["New"] * 4,
+    "R2": [r2_new, dt_r2_new, rf_r2_new, gb_r2],
+    "MAE": [mae_new, dt_mae_new, rf_mae_new, gb_mae],
+    "RMSE": [rmse_new, dt_rmse_new, rf_rmse_new, gb_rmse],
+})
+print("\nAll models (new feature set):")
+print(all_models_comparison)
+
+plt.figure(figsize=(7, 4))
+plt.bar(all_models_comparison["Model"], all_models_comparison["R2"],
+        color=["gray", "orange", "green", "purple"])
+plt.title("Test R\u00b2 by Model (new feature set)")
+plt.ylabel("R\u00b2")
+plt.xticks(rotation=15, ha="right")
+plt.tight_layout()
+savefig("07_all_models_r2.png")
+
+# ============================================================
+# WEEK 8 -- EVALUATION EXPANSION
+# ============================================================
+def mape(y_true, y_pred):
+    y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+
+
+def mdape(y_true, y_pred):
+    y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
+    return np.median(np.abs((y_true - y_pred) / y_true)) * 100
+
+
+preds_by_model = {
+    "Linear Regression": lr_preds_new,
+    "Decision Tree": dt_preds_new,
+    "Random Forest": rf_preds_new,
+    "Gradient Boosting": gb_preds,
+}
+
+metrics_rows = []
+for name, preds in preds_by_model.items():
+    metrics_rows.append({
+        "Model": name,
+        "R2": r2_score(y_test_new, preds),
+        "MAE": mean_absolute_error(y_test_new, preds),
+        "RMSE": np.sqrt(np.mean((y_test_new - preds) ** 2)),
+        "MAPE_%": mape(y_test_new, preds),
+        "MdAPE_%": mdape(y_test_new, preds),
+    })
+metrics_summary = pd.DataFrame(metrics_rows).sort_values("R2", ascending=False).reset_index(drop=True)
+print("\nExpanded metrics summary:")
+print(metrics_summary)
+
+best_model_name = metrics_summary.iloc[0]["Model"]
+best_preds = preds_by_model[best_model_name]
+print(f"\nBest performing model: {best_model_name}")
+
+# Which price bands does the best model handle well vs. poorly?
+price_bands = pd.qcut(y_test_new, q=4, labels=["Low (Q1)", "Mid-low (Q2)", "Mid-high (Q3)", "High (Q4)"])
+band_df = pd.DataFrame({
+    "ClosePrice": y_test_new.values,
+    "Predicted": best_preds,
+    "Band": price_bands.values,
+})
+band_df["AbsPctError"] = np.abs((band_df["ClosePrice"] - band_df["Predicted"]) / band_df["ClosePrice"]) * 100
+
+band_summary = band_df.groupby("Band", observed=True).agg(
+    n=("ClosePrice", "size"),
+    median_price=("ClosePrice", "median"),
+    MdAPE_pct=("AbsPctError", "median"),
+    MAPE_pct=("AbsPctError", "mean"),
+).reset_index()
+print(f"\nPrice-band performance for {best_model_name}:")
+print(band_summary)
+
+metrics_summary.to_csv(os.path.join(OUTPUT_DIR, "metrics_summary.csv"), index=False)
+band_summary.to_csv(os.path.join(OUTPUT_DIR, "price_band_summary.csv"), index=False)
+
+plt.figure(figsize=(7, 4))
+plt.bar(band_summary["Band"].astype(str), band_summary["MdAPE_pct"], color="steelblue")
+plt.title(f"Median Absolute % Error by Price Band ({best_model_name})")
+plt.ylabel("MdAPE (%)")
+plt.xlabel("Close Price band")
+plt.tight_layout()
+savefig("08_price_band_error.png")
