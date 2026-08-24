@@ -49,10 +49,7 @@ way if those packages are available in your environment).
 ## How to re-run
 1. Upload at least 6 months of `CRMLSSold*.csv` files into Colab or in the same folder as
    `pipeline.py`
-2. `pip install pandas numpy scikit-learn matplotlib geopandas shapely`
-   (geopandas/shapely are optional -- the script falls back to the MLS
-   export's own school-district field if they, or internet access, aren't
-   available).
+2. `pip install pandas numpy scikit-learn matplotlib`
 3. Run `python pipeline.py`. Plots and CSV summaries are written to `outputs/`.
 
 ## Files produced
