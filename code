@@ -29,16 +29,10 @@ def savefig(name):
 # ============================================================
 # WEEK 1 -- ORIENTATION & SETUP
 # ============================================================
-try:   
-    from google.colab import files as colab_files  # noqa: F401
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
+from google.colab import files
+uploaded = files.upload()
 
-if IN_COLAB and not glob.glob("/content/CRMLSSold*.csv"):
-    uploaded = colab_files.upload()
-
-DATA_DIR = "/content" if IN_COLAB else "."
+DATA_DIR = "/content"
 
 # ============================================================
 # WEEK 2 -- DATA EXPLORATION
